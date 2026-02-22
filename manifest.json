@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Visibility Spoofer",
+  "version": "1.0",
+  "description": "Spoofs the Page Visibility API",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["spoof.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    }
+  ]
+}
