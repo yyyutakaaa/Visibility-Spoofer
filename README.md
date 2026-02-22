@@ -28,7 +28,7 @@ A Chrome extension that spoofs the [Page Visibility API](https://developer.mozil
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/visibility-spoofer.git
+   git clone https://github.com/yyyutakaaa/Visibility-Spoofer.git
    ```
 2. Open Chrome and navigate to `chrome://extensions/`
 3. Enable **Developer mode** (top right toggle)
