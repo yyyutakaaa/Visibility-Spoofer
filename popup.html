@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Visibility Spoofer</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="container">
+        <header>Visibility Spoofer</header>
+
+        <div class="toggle-row">
+            <span class="toggle-label">Active on this site</span>
+            <label class="switch">
+                <input type="checkbox" id="toggle">
+                <span class="track"><span class="thumb"></span></span>
+            </label>
+        </div>
+        <div class="toggle-status" id="status">Spoofing disabled</div>
+
+        <div class="section-label">ACTIVE PROTECTIONS</div>
+        <ul class="protections">
+            <li>Visibility API</li>
+            <li>Focus &amp; blur events</li>
+            <li>Audio context state</li>
+            <li>User activation</li>
+            <li>Animation timing</li>
+            <li>Iframe protection</li>
+        </ul>
+
+        <footer id="footer">—</footer>
+    </div>
+    <script src="popup.js"></script>
+</body>
+</html>

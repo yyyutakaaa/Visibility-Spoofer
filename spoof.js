@@ -1,6 +1,14 @@
 (function () {
     'use strict';
 
+    // Gate check: gate.js (isolated world, document_start) sets this
+    // attribute synchronously from sessionStorage when this site is
+    // in the disabled_sites list. If set, skip all spoofing.
+    if (document.documentElement &&
+        document.documentElement.getAttribute('data-vs-off')) {
+        return;
+    }
+
     // ================================================================
     //  PHASE 0 — NATIVE REFERENCE VAULT
     //  Store references to all original native functions BEFORE anything
@@ -28,6 +36,9 @@
         reflectDefineProperty: Reflect.defineProperty,
         setPrototypeOf: Object.setPrototypeOf,
         MutationObserver: window.MutationObserver,
+        requestAnimationFrame: window.requestAnimationFrame,
+        cancelAnimationFrame: window.cancelAnimationFrame,
+        perfNow: performance.now.bind(performance),
     });
 
 
@@ -315,11 +326,12 @@
 
     // ================================================================
     //  PHASE 5 — EVENT LISTENER INTERCEPTION
-    //  Block visibility/focus events at the window/document level, but
-    //  allow them on child elements so website UIs (dropdowns, form
-    //  validation, etc.) continue to work normally.
+    //  Block visibility/focus events completely on window/document.
+    //  For interaction events (copy, paste, keyboard, etc.), only block
+    //  detection at window/document level, but allow them on elements.
     // ================================================================
 
+    // Events that are completely blocked (visibility/focus detection)
     const BLOCKED_EVENTS = new Set([
         'visibilitychange',
         'webkitvisibilitychange',
@@ -335,31 +347,78 @@
         'pageshow'
     ]);
 
+    // Events that are only blocked at window/document level (interaction detection)
+    const MONITORED_EVENTS = new Set([
+        'copy',
+        'cut',
+        'paste',
+        'drag',
+        'dragstart',
+        'dragend',
+        'dragover',
+        'dragenter',
+        'dragleave',
+        'drop',
+        'contextmenu',
+        'beforecopy',
+        'beforecut',
+        'beforepaste'
+    ]);
+
     /**
-     * Capture-phase blocker — added via the original addEventListener
-     * so it isn't intercepted by our own override.
-     * Only stops propagation if the target is window or document.
+     * Capture-phase blocker — stops visibility events completely
      */
-    function captureBlocker(e) {
+    function visibilityBlocker(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+    }
+
+    /**
+     * Capture-phase blocker for interaction events — only blocks at window/document
+     * level, but allows events to work on child elements
+     */
+    function interactionBlocker(e) {
         const t = e.target;
+        // Only block if the event is directly on window/document/documentElement
+        // This prevents detection at the top level but allows functionality on elements
         if (t === document || t === window || t === document.documentElement) {
-            e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
         }
     }
 
+    // Block visibility events completely on window and document
     for (const eventType of BLOCKED_EVENTS) {
-        N.addEventListener.call(document, eventType, captureBlocker, true);
-        N.addEventListener.call(window, eventType, captureBlocker, true);
+        N.addEventListener.call(document, eventType, visibilityBlocker, true);
+        N.addEventListener.call(window, eventType, visibilityBlocker, true);
+    }
+
+    // Block interaction event detection at window/document level only
+    for (const eventType of MONITORED_EVENTS) {
+        N.addEventListener.call(document, eventType, interactionBlocker, true);
+        N.addEventListener.call(window, eventType, interactionBlocker, true);
     }
 
     // --- Override addEventListener ---
+    // Only silently drop BLOCKED_EVENTS listeners on window/document
+    // MONITORED_EVENTS are allowed to register but will be blocked by capture phase
+    /**
+     * Check if an EventTarget is a top-level detection surface
+     * (window, document, body, or documentElement).
+     */
+    function isTopLevelTarget(target) {
+        return target === window || target === document ||
+            target === document.body || target === document.documentElement;
+    }
+
     const cloakedAddEventListener = function addEventListener(type, listener, options) {
-        // Silently drop visibility-related listeners on window/document
-        if ((this === document || this === window) && BLOCKED_EVENTS.has(type)) {
+        // Silently drop visibility event listeners on top-level targets
+        if (isTopLevelTarget(this) && BLOCKED_EVENTS.has(type)) {
             return undefined;
         }
+        // Allow all other events, including MONITORED_EVENTS
+        // (they're blocked at capture phase instead)
         return N.reflectApply(N.addEventListener, this, arguments);
     };
     cloak(cloakedAddEventListener, N.addEventListener);
@@ -371,7 +430,7 @@
 
     // --- Override removeEventListener ---
     const cloakedRemoveEventListener = function removeEventListener(type, listener, options) {
-        if ((this === document || this === window) && BLOCKED_EVENTS.has(type)) {
+        if (isTopLevelTarget(this) && BLOCKED_EVENTS.has(type)) {
             return undefined;
         }
         return N.reflectApply(N.removeEventListener, this, arguments);
@@ -398,6 +457,98 @@
 
 
     // ================================================================
+    //  PHASE 6.1 — navigator.userActivation SPOOFING
+    //  Override isActive and hasBeenActive to always return true,
+    //  preventing detection via user activation state polling.
+    // ================================================================
+
+    try {
+        if (typeof navigator !== 'undefined' && navigator.userActivation) {
+            const uaProto = N.getPrototypeOf(navigator.userActivation);
+
+            for (const prop of ['isActive', 'hasBeenActive']) {
+                const origDesc = N.getOwnPropertyDescriptor(uaProto, prop);
+                if (!origDesc || !origDesc.get) continue;
+
+                const getter = function () { return true; };
+                cloak(getter, origDesc.get);
+
+                safeDefine(uaProto, prop, {
+                    configurable: true,
+                    enumerable: true,
+                    get: getter
+                });
+
+                registerFakeDescriptor(uaProto, prop, {
+                    configurable: origDesc.configurable !== undefined ? origDesc.configurable : true,
+                    enumerable: origDesc.enumerable !== undefined ? origDesc.enumerable : true,
+                    get: origDesc.get,
+                    set: origDesc.set || undefined
+                });
+            }
+        }
+    } catch (_) { /* UserActivation API not available */ }
+
+
+    // ================================================================
+    //  PHASE 6.2 — AudioContext.state SPOOFING
+    //  Override the state getter to always return "running" and block
+    //  statechange events, preventing audio-based visibility detection.
+    // ================================================================
+
+    try {
+        const ACProto = typeof AudioContext !== 'undefined' && AudioContext.prototype;
+        if (ACProto) {
+            // --- Override state getter ---
+            const stateDesc = N.getOwnPropertyDescriptor(ACProto, 'state');
+            if (stateDesc && stateDesc.get) {
+                const stateGetter = function () { return 'running'; };
+                cloak(stateGetter, stateDesc.get);
+
+                safeDefine(ACProto, 'state', {
+                    configurable: true,
+                    enumerable: true,
+                    get: stateGetter
+                });
+
+                registerFakeDescriptor(ACProto, 'state', {
+                    configurable: stateDesc.configurable !== undefined ? stateDesc.configurable : true,
+                    enumerable: stateDesc.enumerable !== undefined ? stateDesc.enumerable : true,
+                    get: stateDesc.get,
+                    set: stateDesc.set || undefined
+                });
+            }
+
+            // --- Block onstatechange handler property ---
+            const oscDesc = N.getOwnPropertyDescriptor(ACProto, 'onstatechange');
+            if (oscDesc) {
+                const oscGetter = function () { return null; };
+                const oscSetter = function (_v) { /* silently discard */ };
+                if (oscDesc.get) cloak(oscGetter, oscDesc.get);
+                if (oscDesc.set) cloak(oscSetter, oscDesc.set);
+
+                safeDefine(ACProto, 'onstatechange', {
+                    configurable: true,
+                    enumerable: true,
+                    get: oscGetter,
+                    set: oscSetter
+                });
+
+                registerFakeDescriptor(ACProto, 'onstatechange', {
+                    configurable: oscDesc.configurable !== undefined ? oscDesc.configurable : true,
+                    enumerable: oscDesc.enumerable !== undefined ? oscDesc.enumerable : true,
+                    get: oscDesc.get || oscGetter,
+                    set: oscDesc.set || oscSetter
+                });
+            }
+        }
+    } catch (_) { /* AudioContext API not available */ }
+
+    // Add statechange to blocked events set (used by capture-phase blocker)
+    BLOCKED_EVENTS.add('statechange');
+
+
+    // ================================================================
     //  PHASE 7 — DYNAMIC IFRAME PROTECTION
     //  When sites create iframes at runtime, their documents also need
     //  to be spoofed. The manifest's "all_frames": true handles static
@@ -405,15 +556,222 @@
     //  extra push.
     // ================================================================
 
+    // Handler property names, split by target type, so we can re-derive
+    // them for each iframe's own window/document objects.
+    const WINDOW_HANDLER_NAMES = ['onblur', 'onfocus'];
+    const DOC_HANDLER_NAMES = ['onvisibilitychange', 'onblur', 'onfocus'];
+
+    /**
+     * Apply full spoofing to a same-origin iframe.
+     *
+     * Each same-origin iframe has its own JS realm with distinct
+     * prototypes (Function.prototype, EventTarget.prototype,
+     * Document.prototype, etc.). We must patch each realm
+     * independently — references from the outer scope only work for
+     * shared-prototype cases, which same-origin iframes are NOT.
+     *
+     * Cross-origin iframes will throw on `iframe.contentDocument`
+     * access and are caught by the outer try/catch. Cross-origin
+     * frames must rely on the manifest's "all_frames": true +
+     * "world": "MAIN" content script injection, which causes the
+     * browser to run spoof.js independently in each frame's world.
+     * However, dynamically-inserted cross-origin iframes whose src
+     * is set AFTER insertion may not receive the content script if
+     * the browser has already committed the about:blank navigation.
+     * There is no JS-level workaround for this — it is a browser
+     * security boundary.
+     */
     function spoofIframeDocument(iframe) {
         try {
-            const doc = iframe.contentDocument;
-            if (!doc) return;
+            const iDoc = iframe.contentDocument;
+            if (!iDoc) return;
+
+            const iWin = iframe.contentWindow;
+            if (!iWin) return;
+
+            // Guard against double-patching (e.g. MutationObserver fires
+            // multiple times for the same iframe).
+            if (iDoc.__vsSpoofed) return;
+            try {
+                N.defineProperty(iDoc, '__vsSpoofed', {
+                    value: true, configurable: false, enumerable: false, writable: false
+                });
+            } catch (_) { return; }
+
+            // ----------------------------------------------------------
+            //  1. Patch the iframe's Function.prototype.toString
+            //     so that cloaked functions pass toString() checks when
+            //     called from inside the iframe's realm.
+            //     We reuse the outer nativeLookup WeakMap — functions
+            //     registered via cloak() in the outer scope are still
+            //     found because WeakMap keys are identity-based, not
+            //     realm-based.
+            // ----------------------------------------------------------
+            try {
+                const iFP = iWin.Function.prototype;
+                const iNativeToString = iFP.toString;
+
+                const iCloakedToString = function toString() {
+                    const original = nativeLookup.get(this);
+                    if (original) {
+                        return N.reflectApply(N.toString, original, []);
+                    }
+                    // Fall back to the iframe's own native toString for
+                    // functions we haven't cloaked.
+                    return N.reflectApply(iNativeToString, this, []);
+                };
+
+                nativeLookup.set(iCloakedToString, iNativeToString);
+                try {
+                    N.defineProperty(iCloakedToString, 'name', { configurable: true, value: 'toString' });
+                    N.defineProperty(iCloakedToString, 'length', { configurable: true, value: 0 });
+                } catch (_) { }
+
+                N.defineProperty(iFP, 'toString', {
+                    configurable: true,
+                    writable: true,
+                    value: iCloakedToString
+                });
+            } catch (_) { /* locked prototype — best-effort */ }
+
+            // ----------------------------------------------------------
+            //  2. Phase 3 — Visibility property spoofing
+            // ----------------------------------------------------------
             for (const [prop, value] of VISIBILITY_PROPS) {
-                spoofVisibilityProp(doc, prop, value);
+                spoofVisibilityProp(iDoc, prop, value);
             }
+
+            // ----------------------------------------------------------
+            //  3. Phase 4 — Handler property spoofing
+            //     Neutralise on* handler properties on the iframe's
+            //     own window and document.
+            // ----------------------------------------------------------
+            function spoofHandlerProp(obj, prop) {
+                const proto = N.getPrototypeOf(obj);
+                const origDesc = N.getOwnPropertyDescriptor(proto, prop)
+                    || N.getOwnPropertyDescriptor(obj, prop);
+
+                const getter = function () { return null; };
+                const setter = function (_v) { /* silently discard */ };
+
+                if (origDesc) {
+                    if (origDesc.get) cloak(getter, origDesc.get);
+                    if (origDesc.set) cloak(setter, origDesc.set);
+                }
+
+                safeDefine(obj, prop, {
+                    configurable: true,
+                    enumerable: true,
+                    get: getter,
+                    set: setter
+                });
+
+                if (origDesc) {
+                    registerFakeDescriptor(obj, prop, {
+                        configurable: origDesc.configurable !== undefined ? origDesc.configurable : true,
+                        enumerable: origDesc.enumerable !== undefined ? origDesc.enumerable : true,
+                        get: origDesc.get || getter,
+                        set: origDesc.set || setter
+                    });
+                }
+            }
+
+            for (const prop of WINDOW_HANDLER_NAMES) {
+                spoofHandlerProp(iWin, prop);
+            }
+            for (const prop of DOC_HANDLER_NAMES) {
+                spoofHandlerProp(iDoc, prop);
+            }
+
+            // ----------------------------------------------------------
+            //  4. Phase 5 — Capture-phase event blockers + addEventListener
+            //     interception on the iframe's own EventTarget.prototype.
+            // ----------------------------------------------------------
+
+            // 4a. Install capture-phase blockers on the iframe's targets.
+            //     We reuse the outer visibilityBlocker / interactionBlocker
+            //     functions — they reference the event object only, so they
+            //     work cross-realm.
+            for (const eventType of BLOCKED_EVENTS) {
+                N.addEventListener.call(iDoc, eventType, visibilityBlocker, true);
+                N.addEventListener.call(iWin, eventType, visibilityBlocker, true);
+            }
+            for (const eventType of MONITORED_EVENTS) {
+                N.addEventListener.call(iDoc, eventType, interactionBlocker, true);
+                N.addEventListener.call(iWin, eventType, interactionBlocker, true);
+            }
+
+            // 4b. Patch the iframe's EventTarget.prototype.addEventListener
+            //     and removeEventListener. We must build a fresh
+            //     isTopLevelTarget that knows about THIS iframe's
+            //     window/document, not the outer ones.
+            try {
+                const iETP = iWin.EventTarget.prototype;
+                const iNativeAEL = iETP.addEventListener;
+                const iNativeREL = iETP.removeEventListener;
+
+                const iCloakedAEL = function addEventListener(type, listener, options) {
+                    if ((this === iDoc || this === iWin ||
+                         this === iDoc.body || this === iDoc.documentElement) &&
+                        BLOCKED_EVENTS.has(type)) {
+                        return undefined;
+                    }
+                    return N.reflectApply(iNativeAEL, this, arguments);
+                };
+                cloak(iCloakedAEL, iNativeAEL);
+                N.defineProperty(iETP, 'addEventListener', {
+                    configurable: true,
+                    writable: true,
+                    value: iCloakedAEL
+                });
+
+                const iCloakedREL = function removeEventListener(type, listener, options) {
+                    if ((this === iDoc || this === iWin ||
+                         this === iDoc.body || this === iDoc.documentElement) &&
+                        BLOCKED_EVENTS.has(type)) {
+                        return undefined;
+                    }
+                    return N.reflectApply(iNativeREL, this, arguments);
+                };
+                cloak(iCloakedREL, iNativeREL);
+                N.defineProperty(iETP, 'removeEventListener', {
+                    configurable: true,
+                    writable: true,
+                    value: iCloakedREL
+                });
+            } catch (_) { /* locked EventTarget — best-effort */ }
+
+            // ----------------------------------------------------------
+            //  5. Phase 6 — hasFocus() override on the iframe's
+            //     Document.prototype.
+            // ----------------------------------------------------------
+            try {
+                const iDocProto = N.getPrototypeOf(iDoc);
+                const iNativeHasFocus = iDocProto.hasFocus || iDoc.hasFocus;
+
+                const iCloakedHasFocus = function hasFocus() { return true; };
+                cloak(iCloakedHasFocus, iNativeHasFocus);
+
+                N.defineProperty(iDocProto, 'hasFocus', {
+                    configurable: true,
+                    writable: true,
+                    value: iCloakedHasFocus
+                });
+            } catch (_) { /* locked prototype — best-effort */ }
+
         } catch (_) {
-            // Cross-origin — will be handled by the content script injection
+            // Cross-origin iframe — contentDocument access throws a
+            // DOMException (SecurityError). These frames cannot be
+            // patched from the parent context. They rely on the
+            // manifest's content_scripts configuration:
+            //   "all_frames": true, "world": "MAIN"
+            // which causes the browser to inject spoof.js into each
+            // frame independently at document_start. This covers
+            // static cross-origin iframes and those whose src is set
+            // before insertion. Dynamically-inserted cross-origin
+            // frames whose src changes after DOM insertion may miss
+            // the content script injection window — there is no
+            // JS-level workaround for this browser limitation.
         }
     }
 
@@ -456,6 +814,107 @@
 
 
     // ================================================================
+    //  PHASE 9 — requestAnimationFrame THROTTLING COMPENSATION
+    //  Browsers throttle rAF to ~1fps (or pause entirely) in background
+    //  tabs. Sites can measure the timestamp delta between frames to
+    //  detect this. We maintain a virtual timeline that always advances
+    //  at ~60fps, clamping the DOMHighResTimeStamp passed to callbacks
+    //  so animations and delta-time checks see a consistent cadence.
+    // ================================================================
+
+    (function () {
+        const FRAME_BUDGET = 1000 / 60;          // ~16.667ms per frame
+        // Tolerate up to 3× a normal frame before considering it throttled.
+        // This avoids clamping during legitimate jank on a visible tab.
+        const THROTTLE_THRESHOLD = FRAME_BUDGET * 3;
+
+        // Virtual timeline state
+        let virtualTime = -1;                     // -1 = uninitialised
+        let lastRealTime = -1;
+
+        // Bookkeeping: real rAF id → { callback, cancelled }
+        const pending = new Map();
+
+        /**
+         * Advance the virtual clock.
+         * If the real delta since the last frame exceeds the throttle
+         * threshold we clamp the advance to one ideal frame, keeping
+         * the virtual timeline smooth. Otherwise we advance by the
+         * real delta so foreground behaviour is unaffected.
+         */
+        function advanceVirtualTime(realNow) {
+            if (virtualTime < 0) {
+                // First frame — seed from the real timestamp
+                virtualTime = realNow;
+                lastRealTime = realNow;
+                return virtualTime;
+            }
+
+            const realDelta = realNow - lastRealTime;
+            lastRealTime = realNow;
+
+            if (realDelta > THROTTLE_THRESHOLD) {
+                // Background-throttled frame — advance by exactly one
+                // ideal frame so the consumer sees a steady 60fps cadence.
+                virtualTime += FRAME_BUDGET;
+            } else {
+                // Normal foreground frame — pass the real delta through
+                // so we don't introduce artificial jitter.
+                virtualTime += realDelta;
+            }
+
+            return virtualTime;
+        }
+
+        // --- Patched requestAnimationFrame ---
+        const cloakedRAF = function requestAnimationFrame(callback) {
+            if (typeof callback !== 'function') {
+                // Match native behaviour: throw TypeError for non-functions
+                return N.reflectApply(N.requestAnimationFrame, window, [callback]);
+            }
+
+            const entry = { callback: callback, cancelled: false };
+
+            const realId = N.reflectApply(N.requestAnimationFrame, window, [
+                function (realTimestamp) {
+                    if (entry.cancelled) return;
+                    pending.delete(realId);
+                    const virtualTs = advanceVirtualTime(realTimestamp);
+                    entry.callback(virtualTs);
+                }
+            ]);
+
+            entry.realId = realId;
+            pending.set(realId, entry);
+            return realId;
+        };
+        cloak(cloakedRAF, N.requestAnimationFrame);
+        N.defineProperty(window, 'requestAnimationFrame', {
+            configurable: true,
+            writable: true,
+            value: cloakedRAF
+        });
+
+        // --- Patched cancelAnimationFrame ---
+        const cloakedCAF = function cancelAnimationFrame(id) {
+            const entry = pending.get(id);
+            if (entry) {
+                entry.cancelled = true;
+                pending.delete(id);
+            }
+            // Always forward to the real cAF so the browser can
+            // release the underlying frame request.
+            return N.reflectApply(N.cancelAnimationFrame, window, [id]);
+        };
+        cloak(cloakedCAF, N.cancelAnimationFrame);
+        N.defineProperty(window, 'cancelAnimationFrame', {
+            configurable: true,
+            writable: true,
+            value: cloakedCAF
+        });
+    })();
+
+    // ================================================================
     //  PHASE 8 — ADDITIONAL HARDENING
     // ================================================================
 
@@ -468,12 +927,6 @@
     // trace contains extension paths. We can't fully prevent this, but
     // running in "world": "MAIN" means our code runs in the page context
     // so stack traces won't contain chrome-extension:// URLs.
-
-    // --- Protect against timing-based detection ---
-    // requestAnimationFrame is throttled in hidden tabs. Since the browser
-    // still thinks the tab is hidden at the OS level, rAF will be throttled.
-    // There's no clean JS-only fix for this, but most sites don't use this
-    // detection vector because it's unreliable.
 
     // --- Protect against document.createEvent detection ---
     // Some sites dispatch synthetic visibilitychange events and check if

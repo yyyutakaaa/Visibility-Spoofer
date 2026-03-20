@@ -1,0 +1,133 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    width: 320px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1a1a1a;
+    color: #e0e0e0;
+    -webkit-font-smoothing: antialiased;
+}
+
+.container {
+    padding: 20px;
+}
+
+/* Header */
+header {
+    font-size: 13px;
+    font-weight: 400;
+    color: #999;
+    letter-spacing: 0.3px;
+    margin-bottom: 20px;
+}
+
+/* Toggle row */
+.toggle-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.toggle-label {
+    font-size: 15px;
+    font-weight: 500;
+    color: #fff;
+}
+
+/* Toggle switch */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+}
+
+.track {
+    position: absolute;
+    inset: 0;
+    background: #333;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    background: #666;
+    border-radius: 50%;
+    transition: transform 0.2s, background 0.2s;
+}
+
+input:checked + .track {
+    background: #fff;
+}
+
+input:checked + .track .thumb {
+    transform: translateX(20px);
+    background: #1a1a1a;
+}
+
+/* Status text */
+.toggle-status {
+    font-size: 12px;
+    color: #555;
+    margin-bottom: 24px;
+    transition: color 0.2s;
+}
+
+.toggle-status.active {
+    color: #888;
+}
+
+/* Section label */
+.section-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: #555;
+    letter-spacing: 1.2px;
+    margin-bottom: 10px;
+}
+
+/* Protection list */
+.protections {
+    list-style: none;
+    margin-bottom: 24px;
+}
+
+.protections li {
+    font-size: 12px;
+    color: #666;
+    line-height: 1.5;
+    padding: 2px 0;
+}
+
+.protections li::before {
+    content: "·";
+    margin-right: 8px;
+    color: #444;
+}
+
+/* Footer */
+footer {
+    font-size: 11px;
+    color: #444;
+    border-top: 1px solid #252525;
+    padding-top: 14px;
+}

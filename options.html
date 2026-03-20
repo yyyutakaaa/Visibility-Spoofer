@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visibility Spoofer - Instellingen</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #00d4ff;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        .section {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+
+        .section h2 {
+            color: #00d4ff;
+            font-size: 18px;
+            margin-bottom: 16px;
+        }
+
+        .list-container {
+            background: #1a1a2e;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+            min-height: 100px;
+        }
+
+        .list-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            background: #16213e;
+            border-radius: 6px;
+            margin-bottom: 8px;
+        }
+
+        .list-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .list-item span {
+            flex: 1;
+            color: #eee;
+            font-size: 14px;
+        }
+
+        .list-item button {
+            background: #ff4444;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.2s;
+        }
+
+        .list-item button:hover {
+            background: #ff2222;
+        }
+
+        .add-form {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .add-form input {
+            flex: 1;
+            padding: 10px 12px;
+            background: #1a1a2e;
+            border: 1px solid #2d3561;
+            border-radius: 6px;
+            color: #eee;
+            font-size: 14px;
+        }
+
+        .add-form input:focus {
+            outline: none;
+            border-color: #00d4ff;
+        }
+
+        .add-form button {
+            padding: 10px 20px;
+            background: #00d4ff;
+            color: #1a1a2e;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        .add-form button:hover {
+            background: #00bbdd;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #666;
+            padding: 20px;
+            font-size: 14px;
+        }
+
+        .global-toggle {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px;
+            background: #1a1a2e;
+            border-radius: 8px;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 26px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #444;
+            transition: 0.3s;
+            border-radius: 26px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: #00d4ff;
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(24px);
+        }
+
+        .info-box {
+            background: #2d3561;
+            border-left: 4px solid #00d4ff;
+            padding: 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            line-height: 1.6;
+            color: #ccc;
+        }
+
+        .back-link {
+            display: inline-block;
+            margin-top: 20px;
+            color: #00d4ff;
+            text-decoration: none;
+            font-size: 14px;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Visibility Spoofer - Instellingen</h1>
+
+        <div class="section">
+            <h2>Globale instellingen</h2>
+            <div class="global-toggle">
+                <div>
+                    <strong>Globaal inschakelen</strong>
+                    <p style="font-size: 13px; color: #999; margin-top: 4px;">
+                        Schakel spoofing in voor alle sites (tenzij in blacklist)
+                    </p>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="globalToggle">
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Whitelist</h2>
+            <p style="color: #999; font-size: 13px; margin-bottom: 12px;">
+                Sites waar spoofing altijd actief is
+            </p>
+            <div class="list-container" id="whitelistContainer">
+                <div class="empty-state">Geen sites in whitelist</div>
+            </div>
+            <div class="add-form">
+                <input type="text" id="whitelistInput" placeholder="bijv. example.com">
+                <button id="addWhitelist">Toevoegen</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Blacklist</h2>
+            <p style="color: #999; font-size: 13px; margin-bottom: 12px;">
+                Sites waar spoofing nooit actief is
+            </p>
+            <div class="list-container" id="blacklistContainer">
+                <div class="empty-state">Geen sites in blacklist</div>
+            </div>
+            <div class="add-form">
+                <input type="text" id="blacklistInput" placeholder="bijv. example.com">
+                <button id="addBlacklist">Toevoegen</button>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="info-box">
+                <strong>Informatie:</strong><br>
+                • Blacklist heeft voorrang op whitelist<br>
+                • Whitelist heeft voorrang op site-specifieke instellingen<br>
+                • Site-specifieke instellingen worden beheerd via de popup<br>
+                • Wijzigingen worden automatisch toegepast
+            </div>
+        </div>
+
+        <a href="#" class="back-link" id="backLink">← Terug</a>
+    </div>
+
+    <script src="options.js"></script>
+</body>
+</html>
